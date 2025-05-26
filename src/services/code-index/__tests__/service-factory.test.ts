@@ -217,7 +217,7 @@ describe("CodeIndexServiceFactory", () => {
 			mockConfigManager.getConfig.mockReturnValue(testConfig as any)
 
 			// Act & Assert
-			expect(() => factory.createEmbedder()).toThrow("LMStudio configuration missing for embedder creation")
+			expect(() => factory.createEmbedder()).toThrow("LM Studio configuration missing for embedder creation")
 		})
 
 		it("should throw error for invalid embedder provider", () => {
