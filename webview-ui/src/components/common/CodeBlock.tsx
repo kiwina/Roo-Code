@@ -232,6 +232,7 @@ const CodeBlock = memo(
 		const copyButtonWrapperRef = useRef<HTMLDivElement>(null)
 		const { showCopyFeedback, copyWithFeedback } = useCopyToClipboard()
 		const { t } = useAppTranslation()
+		const isMountedRef = useRef(true)
 
 		// Update current language when prop changes, but only if user hasn't
 		// made a selection.
@@ -243,6 +244,14 @@ const CodeBlock = memo(
 			}
 		}, [language, currentLanguage])
 
+		// Manage mounted state
+		useEffect(() => {
+			isMountedRef.current = true
+			return () => {
+				isMountedRef.current = false
+			}
+		}, [])
+
 		// Syntax highlighting with cached Shiki instance.
 		useEffect(() => {
 			const fallback = `<pre style="padding: 0; margin: 0;"><code class="hljs language-${currentLanguage || "txt"}">${source || ""}</code></pre>`
@@ -250,10 +259,13 @@ const CodeBlock = memo(
 			const highlight = async () => {
 				// Show plain text if language needs to be loaded.
 				if (currentLanguage && !isLanguageLoaded(currentLanguage)) {
-					setHighlightedCode(fallback)
+					if (isMountedRef.current) {
+						setHighlightedCode(fallback)
+					}
 				}
 
 				const highlighter = await getHighlighter(currentLanguage)
+				if (!isMountedRef.current) return
 
 				const html = await highlighter.codeToHtml(source || "", {
 					lang: currentLanguage || "txt",
@@ -277,13 +289,18 @@ const CodeBlock = memo(
 						},
 					] as ShikiTransformer[],
 				})
+				if (!isMountedRef.current) return
 
-				setHighlightedCode(html)
+				if (isMountedRef.current) {
+					setHighlightedCode(html)
+				}
 			}
 
 			highlight().catch((e) => {
 				console.error("[CodeBlock] Syntax highlighting error:", e, "\nStack trace:", e.stack)
-				setHighlightedCode(fallback)
+				if (isMountedRef.current) {
+					setHighlightedCode(fallback)
+				}
 			})
 		}, [source, currentLanguage, collapsedHeight])
 
