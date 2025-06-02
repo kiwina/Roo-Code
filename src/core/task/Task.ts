@@ -977,17 +977,7 @@ export class Task extends EventEmitter<ClineEvents> {
 		await this.initiateTaskLoop(newUserContent)
 	}
 
-	public async abortTask(isAbandoned = false) {
-		console.log(`[subtasks] aborting task ${this.taskId}.${this.instanceId}`)
-
-		// Will stop any autonomously running promises.
-		if (isAbandoned) {
-			this.abandoned = true
-		}
-
-		this.abort = true
-		this.emit("taskAborted")
-
+	public dispose(): void {
 		// Stop waiting for child task completion.
 		if (this.pauseInterval) {
 			clearInterval(this.pauseInterval)
@@ -1004,9 +994,24 @@ export class Task extends EventEmitter<ClineEvents> {
 
 		// If we're not streaming then `abortStream` (which reverts the diff
 		// view changes) won't be called, so we need to revert the changes here.
+		// This check should ideally be more robust or part of abortStream's logic.
 		if (this.isStreaming && this.diffViewProvider.isEditing) {
-			await this.diffViewProvider.revertChanges()
+			this.diffViewProvider.revertChanges().catch(console.error)
 		}
+	}
+
+	public async abortTask(isAbandoned = false) {
+		console.log(`[subtasks] aborting task ${this.taskId}.${this.instanceId}`)
+
+		// Will stop any autonomously running promises.
+		if (isAbandoned) {
+			this.abandoned = true
+		}
+
+		this.abort = true
+		this.emit("taskAborted")
+
+		this.dispose() // Call the centralized dispose method
 
 		// Save the countdown message in the automatic retry or other content.
 		await this.saveClineMessages()
