@@ -985,18 +985,48 @@ export class Task extends EventEmitter<ClineEvents> {
 		}
 
 		// Release any terminals associated with this task.
-		TerminalRegistry.releaseTerminalsForTask(this.taskId)
+		try {
+			// Release any terminals associated with this task.
+			TerminalRegistry.releaseTerminalsForTask(this.taskId)
+		} catch (error) {
+			console.error("Error releasing terminals:", error)
+		}
 
-		this.urlContentFetcher.closeBrowser()
-		this.browserSession.closeBrowser()
-		this.rooIgnoreController?.dispose()
-		this.fileContextTracker.dispose()
+		try {
+			this.urlContentFetcher.closeBrowser()
+		} catch (error) {
+			console.error("Error closing URL content fetcher browser:", error)
+		}
 
-		// If we're not streaming then `abortStream` (which reverts the diff
-		// view changes) won't be called, so we need to revert the changes here.
-		// This check should ideally be more robust or part of abortStream's logic.
-		if (this.isStreaming && this.diffViewProvider.isEditing) {
-			this.diffViewProvider.revertChanges().catch(console.error)
+		try {
+			this.browserSession.closeBrowser()
+		} catch (error) {
+			console.error("Error closing browser session:", error)
+		}
+
+		try {
+			if (this.rooIgnoreController) {
+				this.rooIgnoreController.dispose()
+				this.rooIgnoreController = undefined
+			}
+		} catch (error) {
+			console.error("Error disposing RooIgnoreController:", error)
+			// This is the critical one for the leak fix
+		}
+
+		try {
+			this.fileContextTracker.dispose()
+		} catch (error) {
+			console.error("Error disposing file context tracker:", error)
+		}
+
+		try {
+			// If we're not streaming then `abortStream` won't be called
+			if (this.isStreaming && this.diffViewProvider.isEditing) {
+				this.diffViewProvider.revertChanges().catch(console.error)
+			}
+		} catch (error) {
+			console.error("Error reverting diff changes:", error)
 		}
 	}
 
@@ -1011,10 +1041,19 @@ export class Task extends EventEmitter<ClineEvents> {
 		this.abort = true
 		this.emit("taskAborted")
 
-		this.dispose() // Call the centralized dispose method
-
+		try {
+			this.dispose() // Call the centralized dispose method
+		} catch (error) {
+			console.error(`Error during task ${this.taskId}.${this.instanceId} disposal:`, error)
+			// Don't rethrow - we want abort to always succeed
+		}
 		// Save the countdown message in the automatic retry or other content.
-		await this.saveClineMessages()
+		try {
+			// Save the countdown message in the automatic retry or other content.
+			await this.saveClineMessages()
+		} catch (error) {
+			console.error(`Error saving messages during abort for task ${this.taskId}.${this.instanceId}:`, error)
+		}
 	}
 
 	// Used when a sub-task is launched and the parent task is waiting for it to
