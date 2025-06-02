@@ -10,7 +10,7 @@ import { countTokens } from "../../utils/countTokens"
  * Base class for API providers that implements common functionality.
  */
 export abstract class BaseProvider implements ApiHandler {
-	protected client: any // Added protected client field
+	// constructor remains empty, no new properties added here
 
 	abstract createMessage(
 		systemPrompt: string,
@@ -40,17 +40,19 @@ export abstract class BaseProvider implements ApiHandler {
 	 * Attempts common disposal methods on the client if it exists.
 	 */
 	public dispose(): void {
-		if (this.client) {
+		// Use reflection to find any property named 'client' on the instance
+		const clientProperty = (this as any).client
+		if (clientProperty) {
 			// Try common disposal methods that SDKs might have
-			if (typeof (this.client as any).close === "function") {
-				;(this.client as any).close()
-			} else if (typeof (this.client as any).destroy === "function") {
-				;(this.client as any).destroy()
-			} else if (typeof (this.client as any).dispose === "function") {
-				;(this.client as any).dispose()
+			if (typeof clientProperty.close === "function") {
+				clientProperty.close()
+			} else if (typeof clientProperty.destroy === "function") {
+				clientProperty.destroy()
+			} else if (typeof clientProperty.dispose === "function") {
+				clientProperty.dispose()
 			}
-			// Clear the reference
-			this.client = undefined
+			// Clear the reference on the instance
+			;(this as any).client = undefined
 		}
 	}
 }
