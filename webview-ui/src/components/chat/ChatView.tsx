@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, memo } from "react"
 import { useDeepCompareEffect, useEvent, useMount } from "react-use"
 import debounce from "debounce"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
@@ -1212,12 +1212,17 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		vscode.postMessage({ type: "askResponse", askResponse: "objectResponse", text: JSON.stringify(response) })
 	}, [])
 
+	// Memoized components for better performance
+	const MemoizedBrowserSessionRow = memo(BrowserSessionRow)
+	const MemoizedChatRow = memo(ChatRow)
+
+	// Optimized item content function with minimal dependencies
 	const itemContent = useCallback(
 		(index: number, messageOrGroup: ClineMessage | ClineMessage[]) => {
 			// browser session group
 			if (Array.isArray(messageOrGroup)) {
 				return (
-					<BrowserSessionRow
+					<MemoizedBrowserSessionRow
 						messages={messageOrGroup}
 						isLast={index === groupedMessages.length - 1}
 						lastModifiedMessage={modifiedMessages.at(-1)}
@@ -1236,7 +1241,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 
 			// regular message
 			return (
-				<ChatRow
+				<MemoizedChatRow
 					key={messageOrGroup.ts}
 					message={messageOrGroup}
 					isExpanded={expandedRows[messageOrGroup.ts] || false}
@@ -1251,6 +1256,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			)
 		},
 		[
+			MemoizedBrowserSessionRow,
+			MemoizedChatRow,
 			groupedMessages.length,
 			modifiedMessages,
 			handleRowHeightChange,
@@ -1261,6 +1268,74 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			handleBatchFileResponse,
 		],
 	)
+
+	// Optimized item key computation for better reconciliation
+	const computeItemKey = useCallback((index: number, messageOrGroup: ClineMessage | ClineMessage[]) => {
+		if (Array.isArray(messageOrGroup)) {
+			// For browser session groups, use the first message timestamp
+			return `group-${messageOrGroup[0]?.ts || index}`
+		}
+		return `message-${messageOrGroup.ts}`
+	}, [])
+
+	// Dynamic item size estimation based on message type (for future use)
+	const _estimateItemSize = useCallback((messageOrGroup: ClineMessage | ClineMessage[]) => {
+		if (Array.isArray(messageOrGroup)) {
+			// Browser session groups tend to be larger
+			return Math.min(200 + messageOrGroup.length * 50, 600)
+		}
+
+		const message = messageOrGroup
+		// Estimate size based on message content
+		const baseHeight = 80
+		const textLength = message.text?.length || 0
+		const linesEstimate = Math.ceil(textLength / 100) // Rough estimate of lines
+
+		// Different message types have different heights
+		if (message.say === "api_req_finished" || message.say === "api_req_started") {
+			return baseHeight + 40 // API requests need more space
+		}
+		if (message.ask) {
+			return baseHeight + 60 // Ask messages need more space
+		}
+
+		return Math.min(baseHeight + linesEstimate * 20, 400)
+	}, [])
+
+	// Scroll seeking configuration for better performance during fast scrolling
+	const scrollSeekConfiguration = useMemo(
+		() => ({
+			enter: (velocity: number) => Math.abs(velocity) > 200,
+			exit: (velocity: number) => Math.abs(velocity) < 30,
+			change: (_velocity: number, _range: { startIndex: number; endIndex: number }) => {
+				// During fast scrolling, render placeholder or simplified content
+				console.debug("Fast scroll detected:", { velocity: _velocity, range: _range })
+			},
+		}),
+		[],
+	)
+
+	// Range change handler for progressive loading optimization
+	const prevMidpointRef = useRef(0)
+	const rangeChanged = useCallback((range: { startIndex: number; endIndex: number }) => {
+		// Track which messages are visible for progressive features
+		const { startIndex, endIndex } = range
+
+		// Update scroll direction based on range changes
+		const midpoint = (startIndex + endIndex) / 2
+
+		if (midpoint > prevMidpointRef.current) {
+			setScrollDirection("down")
+		} else if (midpoint < prevMidpointRef.current) {
+			setScrollDirection("up")
+		}
+
+		prevMidpointRef.current = midpoint
+
+		// Reset scrolling state after range stabilizes
+		const resetScrolling = debounce(() => setIsScrolling(false), 150)
+		resetScrolling()
+	}, [])
 
 	useEffect(() => {
 		// Only proceed if we have an ask and buttons are enabled.
@@ -1464,6 +1539,13 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							increaseViewportBy={{ top: 1000, bottom: 2000 }}
 							data={groupedMessages} // messages is the raw format returned by extension, modifiedMessages is the manipulated structure that combines certain messages of related type, and visibleMessages is the filtered structure that removes messages that should not be rendered
 							itemContent={itemContent}
+							// Advanced performance optimizations
+							computeItemKey={computeItemKey}
+							defaultItemHeight={120} // Use a better average estimate
+							scrollSeekConfiguration={scrollSeekConfiguration}
+							rangeChanged={rangeChanged}
+							// Improved viewport management
+							overscan={{ main: 5, reverse: 3 }}
 							atBottomStateChange={(isAtBottom) => {
 								setIsAtBottom(isAtBottom)
 								if (isAtBottom) {
@@ -1473,10 +1555,14 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							}}
 							atBottomThreshold={10} // anything lower causes issues with followOutput
 							initialTopMostItemIndex={groupedMessages.length - 1}
-							// Performance optimization: Enable overscan for better scrolling
-							overscan={5}
-							// Performance optimization: Use default layout for better memory usage
-							defaultItemHeight={100}
+							// Memory optimization: Use fixed item heights when possible
+							fixedItemHeight={undefined} // Let dynamic sizing work but with better estimation
+							// Progressive loading hint
+							endReached={() => {
+								// Future: implement progressive loading of older messages
+							}}
+							// Better scroll alignment
+							alignToBottom={true}
 						/>
 					</div>
 					<AutoApproveMenu />
