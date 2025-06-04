@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useCallback, useState } from "react"
 import styled from "styled-components"
 import { useCopyToClipboard } from "@src/utils/clipboard"
 import { getHighlighter, isLanguageLoaded, normalizeLanguage, ExtendedLanguage } from "@src/utils/highlighter"
+import { HighlightCache } from "@src/utils/HighlightCache"
 import { bundledLanguages } from "shiki"
 import type { ShikiTransformer } from "shiki"
 import { ChevronDown, ChevronUp, WrapText, AlignJustify, Copy, Check } from "lucide-react"
@@ -242,12 +243,25 @@ const CodeBlock = memo(
 				setCurrentLanguage(normalizedLang)
 			}
 		}, [language, currentLanguage])
-
 		// Syntax highlighting with cached Shiki instance.
 		useEffect(() => {
 			const fallback = `<pre style="padding: 0; margin: 0;"><code class="hljs language-${currentLanguage || "txt"}">${source || ""}</code></pre>`
 
 			const highlight = async () => {
+				if (!source) {
+					setHighlightedCode(fallback)
+					return
+				}
+
+				const theme = document.body.className.toLowerCase().includes("light") ? "github-light" : "github-dark"
+
+				// Check cache first
+				const cached = HighlightCache.getHighlighted(source, currentLanguage || "txt", theme)
+				if (cached) {
+					setHighlightedCode(cached)
+					return
+				}
+
 				// Show plain text if language needs to be loaded.
 				if (currentLanguage && !isLanguageLoaded(currentLanguage)) {
 					setHighlightedCode(fallback)
@@ -255,9 +269,9 @@ const CodeBlock = memo(
 
 				const highlighter = await getHighlighter(currentLanguage)
 
-				const html = await highlighter.codeToHtml(source || "", {
+				const html = await highlighter.codeToHtml(source, {
 					lang: currentLanguage || "txt",
-					theme: document.body.className.toLowerCase().includes("light") ? "github-light" : "github-dark",
+					theme,
 					transformers: [
 						{
 							pre(node) {
@@ -278,6 +292,8 @@ const CodeBlock = memo(
 					] as ShikiTransformer[],
 				})
 
+				// Cache the result for future use
+				HighlightCache.setHighlighted(source, currentLanguage || "txt", theme, html)
 				setHighlightedCode(html)
 			}
 
