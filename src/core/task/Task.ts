@@ -1007,9 +1007,12 @@ export class Task extends EventEmitter<ClineEvents> {
 		if (this.isStreaming && this.diffViewProvider.isEditing) {
 			await this.diffViewProvider.revertChanges()
 		}
-
 		// Save the countdown message in the automatic retry or other content.
 		await this.saveClineMessages()
+
+		// Clear message arrays to help with memory management
+		this.clineMessages = []
+		this.apiConversationHistory = []
 	}
 
 	// Used when a sub-task is launched and the parent task is waiting for it to

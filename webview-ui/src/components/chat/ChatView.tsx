@@ -163,6 +163,20 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		[apiConfiguration, organizationAllowList],
 	)
 
+	// Memory leak fix: Reset task-specific state when task changes
+	useEffect(() => {
+		if (!currentTaskItem?.id) return
+
+		// Reset all task-specific component state when task changes
+		setExpandedRows({})
+		everVisibleMessagesTsRef.current.clear()
+		disableAutoScrollRef.current = false
+		setShowScrollToBottom(false)
+		setIsAtBottom(false)
+		setWasStreaming(false)
+		setShowCheckpointWarning(false)
+	}, [currentTaskItem?.id])
+
 	// UI layout depends on the last 2 messages
 	// (since it relies on the content of these messages, we are deep comparing. i.e. the button state after hitting button sets enableButtons to false, and this effect otherwise would have to true again even if messages didn't change
 	const lastMessage = useMemo(() => messages.at(-1), [messages])
