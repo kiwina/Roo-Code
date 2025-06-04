@@ -56,6 +56,18 @@ export const MAX_IMAGES_PER_MESSAGE = 20 // Anthropic limits to 20 images
 
 const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0
 
+// Performance optimization: Cache for grouped messages computation
+const groupedMessagesCache = new LRUCache<string, (ClineMessage | ClineMessage[])[]>({
+	max: 100, // Cache up to 100 different message group computations
+	ttl: 1000 * 60 * 5, // 5 minutes TTL
+})
+
+// Performance optimization: Cache for message metadata
+const messageMetadataCache = new LRUCache<number, { isBrowserSession: boolean; messageKey: string }>({
+	max: 10000, // Cache metadata for up to 10k messages
+	ttl: 1000 * 60 * 10, // 10 minutes TTL
+})
+
 const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewProps> = (
 	{ isHidden, showAnnouncement, hideAnnouncement },
 	ref,
@@ -117,7 +129,17 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	// Leaving this less safe version here since if the first message is not a
 	// task, then the extension is in a bad state and needs to be debugged (see
 	// Cline.abort).
-	const task = useMemo(() => messages.at(0), [messages])
+	// Performance optimization: Clear caches when task changes
+	const previousTaskTsRef = useRef<number | undefined>()
+	const task = useMemo(() => {
+		const newTask = messages.at(0)
+		if (newTask?.ts !== previousTaskTsRef.current) {
+			groupedMessagesCache.clear()
+			messageMetadataCache.clear()
+			previousTaskTsRef.current = newTask?.ts
+		}
+		return newTask
+	}, [messages])
 
 	const modifiedMessages = useMemo(() => combineApiRequests(combineCommandSequences(messages.slice(1))), [messages])
 
@@ -997,6 +1019,12 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	}
 
 	const groupedMessages = useMemo(() => {
+		const cacheKey = `${messages.length}-${task?.ts}`
+		const cached = groupedMessagesCache.get(cacheKey)
+		if (cached) {
+			return cached
+		}
+
 		const result: (ClineMessage | ClineMessage[])[] = []
 		let currentGroup: ClineMessage[] = []
 		let isInBrowserSession = false
@@ -1072,8 +1100,9 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			})
 		}
 
+		groupedMessagesCache.set(cacheKey, result) // Cache the computed result
 		return result
-	}, [isCondensing, visibleMessages])
+	}, [isCondensing, visibleMessages, task?.ts, messages.length])
 
 	// scrolling
 
@@ -1211,23 +1240,23 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 					key={messageOrGroup.ts}
 					message={messageOrGroup}
 					isExpanded={expandedRows[messageOrGroup.ts] || false}
-					onToggleExpand={toggleRowExpansion} // This was already stabilized
-					lastModifiedMessage={modifiedMessages.at(-1)} // Original direct access
-					isLast={index === groupedMessages.length - 1} // Original direct access
+					onToggleExpand={toggleRowExpansion}
+					lastModifiedMessage={modifiedMessages.at(-1)}
+					isLast={index === groupedMessages.length - 1}
 					onHeightChange={handleRowHeightChange}
 					isStreaming={isStreaming}
-					onSuggestionClick={handleSuggestionClickInRow} // This was already stabilized
+					onSuggestionClick={handleSuggestionClickInRow}
 					onBatchFileResponse={handleBatchFileResponse}
 				/>
 			)
 		},
 		[
-			expandedRows,
-			toggleRowExpansion,
-			modifiedMessages,
 			groupedMessages.length,
+			modifiedMessages,
 			handleRowHeightChange,
 			isStreaming,
+			expandedRows,
+			toggleRowExpansion,
 			handleSuggestionClickInRow,
 			handleBatchFileResponse,
 		],
@@ -1430,8 +1459,9 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							ref={virtuosoRef}
 							key={task.ts} // trick to make sure virtuoso re-renders when task changes, and we use initialTopMostItemIndex to start at the bottom
 							className="scrollable grow overflow-y-scroll mb-[5px]"
-							// increasing top by 3_000 to prevent jumping around when user collapses a row
-							increaseViewportBy={{ top: 3_000, bottom: Number.MAX_SAFE_INTEGER }} // hack to make sure the last message is always rendered to get truly perfect scroll to bottom animation when new messages are added (Number.MAX_SAFE_INTEGER is safe for arithmetic operations, which is all virtuoso uses this value for in src/sizeRangeSystem.ts)
+							// Performance optimization: More reasonable viewport buffer
+							// Reduced from Number.MAX_SAFE_INTEGER to improve performance
+							increaseViewportBy={{ top: 1000, bottom: 2000 }}
 							data={groupedMessages} // messages is the raw format returned by extension, modifiedMessages is the manipulated structure that combines certain messages of related type, and visibleMessages is the filtered structure that removes messages that should not be rendered
 							itemContent={itemContent}
 							atBottomStateChange={(isAtBottom) => {
@@ -1443,6 +1473,10 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 							}}
 							atBottomThreshold={10} // anything lower causes issues with followOutput
 							initialTopMostItemIndex={groupedMessages.length - 1}
+							// Performance optimization: Enable overscan for better scrolling
+							overscan={5}
+							// Performance optimization: Use default layout for better memory usage
+							defaultItemHeight={100}
 						/>
 					</div>
 					<AutoApproveMenu />

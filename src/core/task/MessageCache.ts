@@ -1,7 +1,7 @@
 import * as vscode from "vscode"
 import * as path from "path"
 import * as fs from "fs/promises"
-import { ClineMessage } from "../../shared/types"
+import { ClineMessage } from "@roo-code/types"
 
 /**
  * LRU Cache for lazy loading messages to reduce memory retention
@@ -53,14 +53,15 @@ export class MessageCache {
 			this.cache.set(index, message)
 			return message
 		}
-
 		// Load message on-demand from storage
 		const message = await this.loadMessageByIndex(index)
 		if (message) {
 			// Implement LRU eviction if cache grows too large
 			if (this.cache.size >= this.maxCacheSize) {
 				const firstKey = this.cache.keys().next().value
-				this.cache.delete(firstKey)
+				if (firstKey !== undefined) {
+					this.cache.delete(firstKey)
+				}
 			}
 
 			this.cache.set(index, message)
@@ -99,11 +100,12 @@ export class MessageCache {
 	async addMessage(message: ClineMessage): Promise<void> {
 		const index = this.messageIds.length
 		this.messageIds.push(index)
-
 		// Add to cache if there's room, or evict LRU
 		if (this.cache.size >= this.maxCacheSize) {
 			const firstKey = this.cache.keys().next().value
-			this.cache.delete(firstKey)
+			if (firstKey !== undefined) {
+				this.cache.delete(firstKey)
+			}
 		}
 
 		this.cache.set(index, message)
