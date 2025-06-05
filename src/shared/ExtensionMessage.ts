@@ -224,6 +224,7 @@ export type ExtensionState = Pick<
 
 	autoCondenseContext: boolean
 	autoCondenseContextPercent: number
+	mcpServers?: McpServer[] // Reverted to optional to unblock web-roo-code build
 }
 
 export interface ClineSayTool {

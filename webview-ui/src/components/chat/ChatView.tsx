@@ -101,6 +101,15 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		messagesRef.current = messages
 	}, [messages])
 
+	const currentTaskItemRef = useRef(currentTaskItem)
+	useEffect(() => {
+		currentTaskItemRef.current = currentTaskItem
+		// Log when the ref is updated to track its state
+		console.log(
+			`ChatView: currentTaskItemRef updated. New ID: ${currentTaskItem?.id}, Old ID: ${currentTaskItemRef.current?.id}`,
+		)
+	}, [currentTaskItem])
+
 	const { tasks } = useTaskSearch()
 
 	// Initialize expanded state based on the persisted setting (default to expanded if undefined)
@@ -403,6 +412,9 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	}, [messages.length])
 
 	useEffect(() => {
+		// ----- START DEBUG LOGGING [fix/webview-stability] -----
+		console.log(`[DEBUG][ChatView] Task switch effect run. New task?.ts: ${task?.ts}`)
+		// ----- END DEBUG LOGGING [fix/webview-stability] -----
 		setExpandedRows({})
 		everVisibleMessagesTsRef.current.clear() // Clear for new task
 	}, [task?.ts])
@@ -640,6 +652,15 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	const handleMessage = useCallback(
 		(e: MessageEvent) => {
 			const message: ExtensionMessage = e.data
+			// ----- START DEBUG LOGGING [fix/webview-stability] -----
+			if (message.type !== "theme" && message.type !== "workspaceUpdated") {
+				// Avoid logging noisy messages
+				console.log(
+					`[DEBUG][ChatView] handleMessage: Received type '${message.type}', currentTask (ref): ${currentTaskItemRef.current?.id}`,
+					message,
+				)
+			}
+			// ----- END DEBUG LOGGING [fix/webview-stability] -----
 
 			switch (message.type) {
 				case "action":
@@ -682,7 +703,11 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 					}
 					break
 				case "condenseTaskContextResponse":
-					if (message.text && message.text === currentTaskItem?.id) {
+					// Use the ref here to ensure we have the latest currentTaskItem
+					console.log(
+						`ChatView: handleMessage condenseTaskContextResponse. Message Text: ${message.text}, Ref Current Task ID: ${currentTaskItemRef.current?.id}`,
+					)
+					if (message.text && message.text === currentTaskItemRef.current?.id) {
 						if (isCondensing && sendingDisabled) {
 							setSendingDisabled(false)
 						}
@@ -699,7 +724,7 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 			isHidden,
 			sendingDisabled,
 			enableButtons,
-			currentTaskItem,
+			// currentTaskItem is removed as it's now accessed via currentTaskItemRef
 			handleChatReset,
 			handleSendMessage,
 			handleSetChatBoxMessage,
@@ -945,6 +970,8 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	)
 
 	useEffect(() => {
+		let isEffectStillCurrent = true
+
 		// This ensures the first message is not read, future user messages are
 		// labeled as `user_feedback`.
 		if (lastMessage && messages.length > 1) {
@@ -963,19 +990,30 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 
 				// ensure message is not a duplicate of last read message
 				if (text !== lastTtsRef.current) {
-					try {
-						playTts(text)
-						lastTtsRef.current = text
-					} catch (error) {
-						console.error("Failed to execute text-to-speech:", error)
+					if (isEffectStillCurrent) {
+						// Check if effect is still current before calling playTts
+						try {
+							playTts(text)
+							lastTtsRef.current = text
+						} catch (error) {
+							console.error("Failed to execute text-to-speech:", error)
+						}
 					}
 				}
 			}
 		}
 
 		// Update previous value.
-		setWasStreaming(isStreaming)
-	}, [isStreaming, lastMessage, wasStreaming, isAutoApproved, messages.length])
+		// This setState should also ideally check isEffectStillCurrent if it were based on async data
+		// but setWasStreaming(isStreaming) is likely safe as isStreaming is a direct dependency.
+		if (isEffectStillCurrent) {
+			setWasStreaming(isStreaming)
+		}
+
+		return () => {
+			isEffectStillCurrent = false
+		}
+	}, [isStreaming, lastMessage, wasStreaming, isAutoApproved, messages.length]) // playTts is stable, lastTtsRef is a ref
 
 	const isBrowserSessionMessage = (message: ClineMessage): boolean => {
 		// Which of visible messages are browser session messages, see above.
@@ -1232,42 +1270,113 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 	)
 
 	useEffect(() => {
+		let isEffectStillCurrent = true // Flag to track if this effect run is still valid
+		let delayTimerId: NodeJS.Timeout | undefined
+
 		// Only proceed if we have an ask and buttons are enabled.
 		if (!clineAsk || !enableButtons) {
 			return
 		}
 
 		const autoApprove = async () => {
-			if (lastMessage?.ask && isAutoApproved(lastMessage)) {
-				// Note that `isAutoApproved` can only return true if
-				// lastMessage is an ask of type "browser_action_launch",
-				// "use_mcp_server", "command", or "tool".
+			// ----- START DEBUG LOGGING [fix/webview-stability] -----
+			const currentLastMessageTs = lastMessage?.ts
+			const autoApprovedResult = lastMessage?.ask ? isAutoApproved(lastMessage) : false
+			console.log(
+				`[DEBUG][ChatView] AutoApprove: called. lastMessage.ask: ${lastMessage?.ask}, isAutoApproved: ${autoApprovedResult}, clineAsk: ${clineAsk}, currentTask: ${currentTaskItem?.id}`,
+			)
+			// ----- END DEBUG LOGGING [fix/webview-stability] -----
 
-				// Add delay for write operations.
-				if (lastMessage.ask === "tool" && isWriteToolAction(lastMessage)) {
-					await new Promise((resolve) => setTimeout(resolve, writeDelayMs))
-					if (!isMountedRef.current) {
-						return
-					}
+			if (!lastMessage?.ask || !autoApprovedResult) {
+				// use the stored result
+				// ----- START DEBUG LOGGING [fix/webview-stability] -----
+				if (lastMessage?.ask && !autoApprovedResult) {
+					console.log(
+						`[DEBUG][ChatView] AutoApprove: Not auto-approved or no lastMessage.ask. lastMessage.ask: ${lastMessage?.ask}, autoApprovedResult: ${autoApprovedResult}`,
+					)
+				}
+				// ----- END DEBUG LOGGING [fix/webview-stability] -----
+				return
+			}
+
+			// Check if effect is still current before potentially long async operation
+			if (!isEffectStillCurrent) return
+
+			// Note that `isAutoApproved` can only return true if
+			// lastMessage is an ask of type "browser_action_launch",
+			// "use_mcp_server", "command", or "tool".
+
+			// Add delay for write operations.
+			if (lastMessage.ask === "tool" && isWriteToolAction(lastMessage)) {
+				try {
+					await new Promise<void>((resolve, reject) => {
+						delayTimerId = setTimeout(() => {
+							if (isEffectStillCurrent && isMountedRef.current) {
+								resolve()
+							} else {
+								// Reject if effect/component became stale during delay
+								reject(new Error("AutoApprove effect became stale during write delay"))
+							}
+						}, writeDelayMs)
+					})
+				} catch (error) {
+					// ----- START DEBUG LOGGING [fix/webview-stability] -----
+					console.log(
+						`[DEBUG][ChatView] AutoApprove: Write delay promise rejected or caught error. Message: ${(error as Error)?.message}, lastMessage.ts: ${currentLastMessageTs}`,
+					)
+					// ----- END DEBUG LOGGING [fix/webview-stability] -----
+					return
 				}
 
-				vscode.postMessage({ type: "askResponse", askResponse: "yesButtonClicked" })
-
-				// This is copied from `handlePrimaryButtonClick`, which we used
-				// to call from `autoApprove`. I'm not sure how many of these
-				// things are actually needed.
-				if (isMountedRef.current) {
-					setSendingDisabled(true)
-					setClineAsk(undefined)
-					setEnableButtons(false)
+				// Re-check after await, as isEffectStillCurrent or isMountedRef might have changed
+				if (!isMountedRef.current || !isEffectStillCurrent) {
+					// ----- START DEBUG LOGGING [fix/webview-stability] -----
+					console.log(
+						`[DEBUG][ChatView] AutoApprove: Stale after delay. isMounted: ${isMountedRef.current}, isEffectStillCurrent: ${isEffectStillCurrent}, lastMessage.ts: ${currentLastMessageTs}`,
+					)
+					// ----- END DEBUG LOGGING [fix/webview-stability] -----
+					return
 				}
 			}
+
+			// Ensure still current before posting message and setting state
+			if (!isEffectStillCurrent) {
+				// ----- START DEBUG LOGGING [fix/webview-stability] -----
+				console.log(
+					`[DEBUG][ChatView] AutoApprove: Stale before posting message. isEffectStillCurrent: ${isEffectStillCurrent}, lastMessage.ts: ${currentLastMessageTs}`,
+				)
+				// ----- END DEBUG LOGGING [fix/webview-stability] -----
+				return
+			}
+			// ----- START DEBUG LOGGING [fix/webview-stability] -----
+			console.log(
+				`[DEBUG][ChatView] AutoApprove: Posting 'yesButtonClicked' for lastMessage.ts: ${currentLastMessageTs}`,
+			)
+			// ----- END DEBUG LOGGING [fix/webview-stability] -----
+			vscode.postMessage({ type: "askResponse", askResponse: "yesButtonClicked" })
+
+			// This is copied from `handlePrimaryButtonClick`, which we used
+			// to call from `autoApprove`. I'm not sure how many of these
+			// things are actually needed.
+			if (isMountedRef.current && isEffectStillCurrent) {
+				setSendingDisabled(true)
+				setClineAsk(undefined)
+				setEnableButtons(false)
+			}
 		}
+
 		autoApprove()
+
+		return () => {
+			isEffectStillCurrent = false // Mark this effect run as no longer current on cleanup
+			if (delayTimerId) {
+				clearTimeout(delayTimerId) // Clear the timer if the effect cleans up
+			}
+		}
 	}, [
 		clineAsk,
 		enableButtons,
-		handlePrimaryButtonClick,
+		// handlePrimaryButtonClick, // Not directly called by this effect anymore
 		alwaysAllowBrowser,
 		alwaysAllowReadOnly,
 		alwaysAllowReadOnlyOutsideWorkspace,
@@ -1275,13 +1384,15 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		alwaysAllowWriteOutsideWorkspace,
 		alwaysAllowExecute,
 		alwaysAllowMcp,
-		messages,
+		messages, // messages is used to derive lastMessage
 		allowedCommands,
 		mcpServers,
 		isAutoApproved,
-		lastMessage,
+		lastMessage, // Direct dependency
 		writeDelayMs,
 		isWriteToolAction,
+		currentTaskItem, // Added to address exhaustive-deps warning for useEffect at L1376
+		// isMountedRef is a ref, doesn't need to be in deps. setState functions are stable.
 	])
 
 	// Function to handle mode switching
@@ -1317,15 +1428,43 @@ const ChatViewComponent: React.ForwardRefRenderFunction<ChatViewRef, ChatViewPro
 		}
 	}, [handleKeyDown])
 
-	useImperativeHandle(ref, () => ({
-		acceptInput: () => {
-			if (enableButtons && primaryButtonText) {
-				handlePrimaryButtonClick(inputValue, selectedImages)
-			} else if (!sendingDisabled && !isProfileDisabled && (inputValue.trim() || selectedImages.length > 0)) {
-				handleSendMessage(inputValue, selectedImages)
-			}
-		},
-	}))
+	useImperativeHandle(
+		ref,
+		() => ({
+			acceptInput: () => {
+				// ----- START DEBUG LOGGING [fix/webview-stability] -----
+				console.log(
+					`[DEBUG][ChatView] acceptInput called. clineAsk: ${clineAsk}, inputValue: "${inputValue}", enableButtons: ${enableButtons}, primaryButtonText: ${primaryButtonText}, sendingDisabled: ${sendingDisabled}, isProfileDisabled: ${isProfileDisabled}`,
+				)
+				// ----- END DEBUG LOGGING [fix/webview-stability] -----
+				if (enableButtons && primaryButtonText) {
+					// ----- START DEBUG LOGGING [fix/webview-stability] -----
+					console.log("[DEBUG][ChatView] acceptInput: Calling handlePrimaryButtonClick")
+					// ----- END DEBUG LOGGING [fix/webview-stability] -----
+					handlePrimaryButtonClick(inputValue, selectedImages)
+				} else if (!sendingDisabled && !isProfileDisabled && (inputValue.trim() || selectedImages.length > 0)) {
+					// ----- START DEBUG LOGGING [fix/webview-stability] -----
+					console.log("[DEBUG][ChatView] acceptInput: Calling handleSendMessage")
+					// ----- END DEBUG LOGGING [fix/webview-stability] -----
+					handleSendMessage(inputValue, selectedImages)
+				}
+			},
+		}),
+		[
+			enableButtons,
+			primaryButtonText,
+			inputValue,
+			selectedImages,
+			sendingDisabled,
+			isProfileDisabled,
+			handlePrimaryButtonClick, // Added
+			handleSendMessage, // Added
+			clineAsk, // Added - and added comma here
+			// handlePrimaryButtonClick, // Duplicate removed
+			// handleSendMessage, // Duplicate removed
+			// clineAsk, // Duplicate removed
+		],
+	)
 
 	const handleCondenseContext = (taskId: string) => {
 		if (isCondensing || sendingDisabled) {

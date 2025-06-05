@@ -127,6 +127,7 @@ export const mergeExtensionState = (prevState: ExtensionState, newState: Extensi
 		customModePrompts: prevCustomModePrompts,
 		customSupportPrompts: prevCustomSupportPrompts,
 		experiments: prevExperiments,
+		mcpServers: prevMcpServers,
 		...prevRest
 	} = prevState
 
@@ -135,18 +136,27 @@ export const mergeExtensionState = (prevState: ExtensionState, newState: Extensi
 		customModePrompts: newCustomModePrompts,
 		customSupportPrompts: newCustomSupportPrompts,
 		experiments: newExperiments,
+		mcpServers: newMcpServers,
 		...newRest
 	} = newState
 
 	const customModePrompts = { ...prevCustomModePrompts, ...newCustomModePrompts }
 	const customSupportPrompts = { ...prevCustomSupportPrompts, ...newCustomSupportPrompts }
 	const experiments = { ...prevExperiments, ...newExperiments }
+	const mcpServersToSet = newMcpServers !== undefined ? newMcpServers : prevMcpServers
 	const rest = { ...prevRest, ...newRest }
 
 	// Note that we completely replace the previous apiConfiguration object with
 	// a new one since the state that is broadcast is the entire apiConfiguration
 	// and therefore merging is not necessary.
-	return { ...rest, apiConfiguration, customModePrompts, customSupportPrompts, experiments }
+	return {
+		...rest,
+		apiConfiguration,
+		customModePrompts,
+		customSupportPrompts,
+		experiments,
+		mcpServers: mcpServersToSet,
+	}
 }
 
 export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -212,6 +222,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			codebaseIndexEmbedderModelId: "",
 		},
 		codebaseIndexModels: { ollama: {}, openai: {} },
+		mcpServers: [], // Added mcpServers to the main state
 	})
 
 	const [didHydrateState, setDidHydrateState] = useState(false)
@@ -219,7 +230,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 	const [theme, setTheme] = useState<any>(undefined)
 	const [filePaths, setFilePaths] = useState<string[]>([])
 	const [openedTabs, setOpenedTabs] = useState<Array<{ label: string; isActive: boolean; path?: string }>>([])
-	const [mcpServers, setMcpServers] = useState<McpServer[]>([])
+	// Removed separate useState for mcpServers: const [mcpServers, setMcpServers] = useState<McpServer[]>([])
 	const [currentCheckpoint, setCurrentCheckpoint] = useState<string>()
 	const [extensionRouterModels, setExtensionRouterModels] = useState<RouterModels | undefined>(undefined)
 
@@ -244,7 +255,34 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 			switch (message.type) {
 				case "state": {
 					const newState = message.state!
-					setState((prevState) => mergeExtensionState(prevState, newState))
+					// console.log('[ExtensionStateContext] Received state update:', newState); // Optional: Log entire new state
+					setState((prevState) => {
+						const mergedState = mergeExtensionState(prevState, newState)
+						// ----- START DEBUG LOGGING [fix/webview-stability] -----
+						// Log key parts of the merged state, especially after a task switch
+						if (prevState.currentTaskItem?.id !== mergedState.currentTaskItem?.id) {
+							console.log(
+								`[DEBUG][ExtensionStateContext] Task Switched. Old Task ID: ${prevState.currentTaskItem?.id ?? "N/A"}, New Task ID: ${mergedState.currentTaskItem?.id ?? "N/A"}`,
+							)
+						}
+						// Ensure mcpServers exists on both before stringifying to avoid 'undefined' string comparison issues
+						// Also, check if they are actually different before logging.
+						const prevMcpString = prevState.mcpServers ? JSON.stringify(prevState.mcpServers) : "[]"
+						const mergedMcpString = mergedState.mcpServers ? JSON.stringify(mergedState.mcpServers) : "[]"
+						if (prevMcpString !== mergedMcpString) {
+							console.log(
+								"[DEBUG][ExtensionStateContext] mcpServers updated:",
+								mergedState.mcpServers ?? [],
+							)
+						}
+						if (prevState.mode !== mergedState.mode) {
+							console.log(
+								`[DEBUG][ExtensionStateContext] Mode Switched. Old: ${prevState.mode}, New: ${mergedState.mode}`,
+							)
+						}
+						// ----- END DEBUG LOGGING [fix/webview-stability] -----
+						return mergedState
+					})
 					setShowWelcome(!checkExistKey(newState.apiConfiguration))
 					setDidHydrateState(true)
 					break
@@ -277,10 +315,11 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 					})
 					break
 				}
-				case "mcpServers": {
-					setMcpServers(message.mcpServers ?? [])
-					break
-				}
+				// Removed case "mcpServers" as it's now part of the main "state" message
+				// case "mcpServers": {
+				// 	setMcpServers(message.mcpServers ?? [])
+				// 	break
+				// }
 				case "currentCheckpointUpdated": {
 					setCurrentCheckpoint(message.text)
 					break
@@ -309,7 +348,7 @@ export const ExtensionStateContextProvider: React.FC<{ children: React.ReactNode
 		didHydrateState,
 		showWelcome,
 		theme,
-		mcpServers,
+		mcpServers: state.mcpServers ?? [], // Use mcpServers from main state, default to [] if undefined
 		currentCheckpoint,
 		filePaths,
 		openedTabs,
