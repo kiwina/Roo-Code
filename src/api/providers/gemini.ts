@@ -4,13 +4,12 @@ import {
 	type GenerateContentResponseUsageMetadata,
 	type GenerateContentParameters,
 	type GenerateContentConfig,
+	CountTokensParameters,
 } from "@google/genai"
-import type { JWTInput } from "google-auth-library"
 
 import { type ModelInfo, type GeminiModelId, geminiDefaultModelId, geminiModels } from "@roo-code/types"
 
 import type { ApiHandlerOptions } from "../../shared/api"
-import { safeJsonParse } from "../../shared/safeJsonParse"
 
 import { convertAnthropicContentToGemini, convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import type { ApiStream } from "../transform/stream"
@@ -18,43 +17,15 @@ import type { ApiStream } from "../transform/stream"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 import { BaseProvider } from "./base-provider"
 
-type GeminiHandlerOptions = ApiHandlerOptions & {
-	isVertex?: boolean
-}
-
 export class GeminiHandler extends BaseProvider implements SingleCompletionHandler {
 	protected options: ApiHandlerOptions
-
 	private client: GoogleGenAI
 
-	constructor({ isVertex, ...options }: GeminiHandlerOptions) {
+	constructor(options: ApiHandlerOptions) {
 		super()
-
 		this.options = options
-
-		const project = this.options.vertexProjectId ?? "not-provided"
-		const location = this.options.vertexRegion ?? "not-provided"
 		const apiKey = this.options.geminiApiKey ?? "not-provided"
-
-		this.client = this.options.vertexJsonCredentials
-			? new GoogleGenAI({
-					vertexai: true,
-					project,
-					location,
-					googleAuthOptions: {
-						credentials: safeJsonParse<JWTInput>(this.options.vertexJsonCredentials, undefined),
-					},
-				})
-			: this.options.vertexKeyFile
-				? new GoogleGenAI({
-						vertexai: true,
-						project,
-						location,
-						googleAuthOptions: { keyFile: this.options.vertexKeyFile },
-					})
-				: isVertex
-					? new GoogleGenAI({ vertexai: true, project, location })
-					: new GoogleGenAI({ apiKey })
+		this.client = new GoogleGenAI({ apiKey })
 	}
 
 	async *createMessage(
@@ -65,7 +36,6 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 		const { id: model, thinkingConfig, maxOutputTokens, info } = this.getModel()
 
 		const contents = messages.map(convertAnthropicMessageToGemini)
-
 		const config: GenerateContentConfig = {
 			systemInstruction,
 			httpOptions: this.options.googleGeminiBaseUrl ? { baseUrl: this.options.googleGeminiBaseUrl } : undefined,
@@ -165,10 +135,11 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 		try {
 			const { id: model } = this.getModel()
 
-			const response = await this.client.models.countTokens({
+			const params: CountTokensParameters = {
 				model,
 				contents: convertAnthropicContentToGemini(content),
-			})
+			}
+			const response = await this.client.models.countTokens(params)
 
 			if (response.totalTokens === undefined) {
 				console.warn("Gemini token counting returned undefined, using fallback")
