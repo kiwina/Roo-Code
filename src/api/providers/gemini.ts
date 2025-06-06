@@ -11,8 +11,10 @@ import { type ModelInfo, type GeminiModelId, geminiDefaultModelId, geminiModels 
 
 import type { ApiHandlerOptions } from "../../shared/api"
 
+import { calculateCostGenai } from "../../utils/calculateCostGenai"
 import { convertAnthropicContentToGemini, convertAnthropicMessageToGemini } from "../transform/gemini-format"
 import type { ApiStream } from "../transform/stream"
+import { getModelParams } from "../transform/model-params"
 
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
 import { BaseProvider } from "./base-provider"
@@ -33,14 +35,14 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 		messages: Anthropic.Messages.MessageParam[],
 		metadata?: ApiHandlerCreateMessageMetadata,
 	): ApiStream {
-		const { id: model, thinkingConfig, maxOutputTokens, info } = this.getModel()
+		const { id: model, info, reasoning: thinkingConfig, maxTokens } = this.getModel()
 
 		const contents = messages.map(convertAnthropicMessageToGemini)
 		const config: GenerateContentConfig = {
 			systemInstruction,
 			httpOptions: this.options.googleGeminiBaseUrl ? { baseUrl: this.options.googleGeminiBaseUrl } : undefined,
 			thinkingConfig,
-			maxOutputTokens,
+			maxOutputTokens: this.options.modelMaxTokens ?? maxTokens ?? undefined,
 			temperature: this.options.modelTemperature ?? 0,
 		}
 
@@ -51,7 +53,28 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 		let lastUsageMetadata: GenerateContentResponseUsageMetadata | undefined
 
 		for await (const chunk of result) {
-			if (chunk.text) {
+			// Process candidates and their parts to separate thoughts from content
+			if (chunk.candidates && chunk.candidates.length > 0) {
+				const candidate = chunk.candidates[0]
+				if (candidate.content && candidate.content.parts) {
+					for (const part of candidate.content.parts) {
+						if (part.thought) {
+							// This is a thinking/reasoning part
+							if (part.text) {
+								yield { type: "reasoning", text: part.text }
+							}
+						} else {
+							// This is regular content
+							if (part.text) {
+								yield { type: "text", text: part.text }
+							}
+						}
+					}
+				}
+			}
+
+			// Fallback to the original text property if no candidates structure
+			else if (chunk.text) {
 				yield { type: "text", text: chunk.text }
 			}
 
@@ -72,38 +95,22 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 				outputTokens,
 				cacheReadTokens,
 				reasoningTokens,
-				totalCost: this.calculateCost({ info, inputTokens, outputTokens, cacheReadTokens }),
+				totalCost: calculateCostGenai({ info, inputTokens, outputTokens, cacheReadTokens }),
 			}
 		}
 	}
 
 	override getModel() {
-		let id = this.options.apiModelId ?? geminiDefaultModelId
-		let info: ModelInfo = geminiModels[id as GeminiModelId]
+		const modelId = this.options.apiModelId
+		let id = modelId && modelId in geminiModels ? (modelId as GeminiModelId) : geminiDefaultModelId
+		const info: ModelInfo = geminiModels[id]
+		const params = getModelParams({ format: "gemini", modelId: id, model: info, settings: this.options })
 
-		if (id?.endsWith(":thinking")) {
-			id = id.slice(0, -":thinking".length)
-
-			if (geminiModels[id as GeminiModelId]) {
-				info = geminiModels[id as GeminiModelId]
-
-				return {
-					id,
-					info,
-					thinkingConfig: this.options.modelMaxThinkingTokens
-						? { thinkingBudget: this.options.modelMaxThinkingTokens }
-						: undefined,
-					maxOutputTokens: this.options.modelMaxTokens ?? info.maxTokens ?? undefined,
-				}
-			}
-		}
-
-		if (!info) {
-			id = geminiDefaultModelId
-			info = geminiModels[geminiDefaultModelId]
-		}
-
-		return { id, info }
+		// The `:thinking` suffix indicates that the model is a "Hybrid"
+		// reasoning model and that reasoning is required to be enabled.
+		// The actual model ID honored by Gemini's API does not have this
+		// suffix.
+		return { id: id.endsWith(":thinking") ? id.replace(":thinking", "") : id, info, ...params }
 	}
 
 	async completePrompt(prompt: string): Promise<string> {
@@ -152,58 +159,5 @@ export class GeminiHandler extends BaseProvider implements SingleCompletionHandl
 			return super.countTokens(content)
 		}
 	}
-
-	public calculateCost({
-		info,
-		inputTokens,
-		outputTokens,
-		cacheReadTokens = 0,
-	}: {
-		info: ModelInfo
-		inputTokens: number
-		outputTokens: number
-		cacheReadTokens?: number
-	}) {
-		if (!info.inputPrice || !info.outputPrice || !info.cacheReadsPrice) {
-			return undefined
-		}
-
-		let inputPrice = info.inputPrice
-		let outputPrice = info.outputPrice
-		let cacheReadsPrice = info.cacheReadsPrice
-
-		// If there's tiered pricing then adjust the input and output token prices
-		// based on the input tokens used.
-		if (info.tiers) {
-			const tier = info.tiers.find((tier) => inputTokens <= tier.contextWindow)
-
-			if (tier) {
-				inputPrice = tier.inputPrice ?? inputPrice
-				outputPrice = tier.outputPrice ?? outputPrice
-				cacheReadsPrice = tier.cacheReadsPrice ?? cacheReadsPrice
-			}
-		}
-
-		// Subtract the cached input tokens from the total input tokens.
-		const uncachedInputTokens = inputTokens - cacheReadTokens
-
-		let cacheReadCost = cacheReadTokens > 0 ? cacheReadsPrice * (cacheReadTokens / 1_000_000) : 0
-
-		const inputTokensCost = inputPrice * (uncachedInputTokens / 1_000_000)
-		const outputTokensCost = outputPrice * (outputTokens / 1_000_000)
-		const totalCost = inputTokensCost + outputTokensCost + cacheReadCost
-
-		const trace: Record<string, { price: number; tokens: number; cost: number }> = {
-			input: { price: inputPrice, tokens: uncachedInputTokens, cost: inputTokensCost },
-			output: { price: outputPrice, tokens: outputTokens, cost: outputTokensCost },
-		}
-
-		if (cacheReadTokens > 0) {
-			trace.cacheRead = { price: cacheReadsPrice, tokens: cacheReadTokens, cost: cacheReadCost }
-		}
-
-		// console.log(`[GeminiHandler] calculateCost -> ${totalCost}`, trace)
-
-		return totalCost
-	}
+	public destruct() {}
 }
