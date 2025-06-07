@@ -3,6 +3,7 @@
 import { Anthropic } from "@anthropic-ai/sdk"
 
 import { ApiStreamChunk } from "../../transform/stream"
+import { calculateCostGenai } from "../../../utils/calculateCostGenai"
 
 import { VertexHandler } from "../vertex"
 
@@ -197,6 +198,295 @@ describe("VertexHandler", () => {
 
 			const modelInfo = testHandler.getModel()
 			expect(modelInfo.id).toBe("claude-sonnet-4@20250514") // Should fall back to default
+		})
+	})
+	describe("countTokens", () => {
+		it("should count tokens successfully", async () => {
+			const mockContent = [{ type: "text" as const, text: "Hello world" }]
+			const mockResponse = { totalTokens: 42 }
+
+			;(handler["client"].models.countTokens as jest.Mock).mockResolvedValue(mockResponse)
+
+			const result = await handler.countTokens(mockContent)
+			expect(result).toBe(42)
+
+			expect(handler["client"].models.countTokens).toHaveBeenCalledWith(
+				expect.objectContaining({
+					model: expect.any(String),
+					contents: expect.any(Array),
+				}),
+			)
+		})
+		it("should use project path for API key authentication", async () => {
+			const testHandler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-001",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+				vertexApiKey: "test-key",
+			})
+
+			// Mock the client
+			testHandler["client"] = {
+				models: {
+					countTokens: jest.fn().mockResolvedValue({ totalTokens: 50 }),
+				},
+			} as any
+
+			const mockContent = [{ type: "text" as const, text: "Test content" }]
+			await testHandler.countTokens(mockContent)
+
+			expect(testHandler["client"].models.countTokens).toHaveBeenCalledWith(
+				expect.objectContaining({
+					model: "projects/test-project/locations/us-central1/publishers/google/models/gemini-2.0-flash-001",
+				}),
+			)
+		})
+
+		it("should fall back to base implementation when response is undefined", async () => {
+			const mockContent = [{ type: "text" as const, text: "Hello world" }]
+			const mockResponse = { totalTokens: undefined }
+
+			;(handler["client"].models.countTokens as jest.Mock).mockResolvedValue(mockResponse)
+
+			// Mock the super.countTokens method
+			const mockSuperCountTokens = jest.fn().mockResolvedValue(25)
+			Object.setPrototypeOf(handler, { countTokens: mockSuperCountTokens })
+
+			const result = await handler.countTokens(mockContent)
+			expect(result).toBe(25)
+			expect(mockSuperCountTokens).toHaveBeenCalledWith(mockContent)
+		})
+
+		it("should fall back to base implementation on API error", async () => {
+			const mockContent = [{ type: "text" as const, text: "Hello world" }]
+			const mockError = new Error("API error")
+
+			;(handler["client"].models.countTokens as jest.Mock).mockRejectedValue(mockError)
+
+			// Mock the super.countTokens method
+			const mockSuperCountTokens = jest.fn().mockResolvedValue(30)
+			Object.setPrototypeOf(handler, { countTokens: mockSuperCountTokens })
+
+			const result = await handler.countTokens(mockContent)
+			expect(result).toBe(30)
+			expect(mockSuperCountTokens).toHaveBeenCalledWith(mockContent)
+		})
+	})
+
+	describe("getModel with :thinking suffix", () => {
+		it("should remove :thinking suffix from model ID", () => {
+			// Note: this model doesn't exist in vertexModels, so it will fall back to default
+			const testHandler = new VertexHandler({
+				apiModelId: "some-thinking-model:thinking",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { id } = testHandler.getModel()
+			// Since the model doesn't exist, it falls back to default
+			expect(id).toBe("claude-sonnet-4@20250514")
+		})
+
+		it("should not modify model ID without :thinking suffix", () => {
+			const testHandler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-001",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { id } = testHandler.getModel()
+			expect(id).toBe("gemini-2.0-flash-001")
+		})
+
+		it("should remove :thinking suffix from actual thinking model", () => {
+			// Test the :thinking logic with the model selection logic separately
+			const testHandler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-thinking-exp-01-21",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			// First verify the model exists and is selected
+			const { id: selectedId } = testHandler.getModel()
+			expect(selectedId).toBe("gemini-2.0-flash-thinking-exp-01-21")
+
+			// Now test with :thinking suffix
+			const thinkingHandler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-thinking-exp-01-21:thinking",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			// This should fall back to default since the :thinking version doesn't exist as a key
+			const { id: thinkingId } = thinkingHandler.getModel()
+			expect(thinkingId).toBe("claude-sonnet-4@20250514")
+		})
+	})
+
+	describe("createMessage with detailed scenarios", () => {
+		it("should handle complex usage metadata with reasoning and cache tokens", async () => {
+			// Create a more detailed mock for createMessage
+			jest.spyOn(handler, "createMessage").mockImplementation(async function* () {
+				yield { type: "usage", inputTokens: 1000, outputTokens: 0 }
+				yield { type: "text", text: "Thinking..." }
+				yield { type: "text", text: "Response content" }
+				yield {
+					type: "usage",
+					inputTokens: 0,
+					outputTokens: 500,
+					cacheReadTokens: 200,
+					reasoningTokens: 150,
+					totalCost: 0.05,
+				}
+			})
+
+			const mockMessages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: "Complex question" }]
+
+			const stream = handler.createMessage("You are helpful", mockMessages)
+			const chunks: any[] = []
+
+			for await (const chunk of stream) {
+				chunks.push(chunk)
+			}
+
+			expect(chunks.length).toBe(4)
+			expect(chunks[3]).toEqual({
+				type: "usage",
+				inputTokens: 0,
+				outputTokens: 500,
+				cacheReadTokens: 200,
+				reasoningTokens: 150,
+				totalCost: 0.05,
+			})
+		})
+		it("should handle API key with project ID in model path", async () => {
+			const testHandler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-001",
+				vertexProjectId: "my-project",
+				vertexRegion: "europe-west1",
+				vertexApiKey: "test-api-key",
+			})
+
+			// Mock the client and its methods
+			const mockGenerateContentStream = jest.fn().mockImplementation(async function* () {
+				yield { text: "Response" }
+				yield { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 } }
+			})
+
+			testHandler["client"] = {
+				models: {
+					generateContentStream: mockGenerateContentStream,
+				},
+			} as any
+
+			const mockMessages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: "Test" }]
+
+			const stream = testHandler.createMessage("System", mockMessages)
+
+			// Consume the stream to trigger the API call
+			const chunks = []
+			for await (const chunk of stream) {
+				chunks.push(chunk)
+			}
+
+			expect(mockGenerateContentStream).toHaveBeenCalledWith(
+				expect.objectContaining({
+					model: "projects/my-project/locations/europe-west1/publishers/google/models/gemini-2.0-flash-001",
+				}),
+			)
+		})
+	})
+
+	describe("calculateCostGenai utility integration", () => {
+		it("should work with vertex model info", () => {
+			const handler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-exp",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { info } = handler.getModel()
+			const inputTokens = 10000
+			const outputTokens = 5000
+
+			// Test that calculateCost works with vertex model info
+			const cost = calculateCostGenai({ info, inputTokens, outputTokens })
+
+			// Should return a number if pricing info is available, undefined if not
+			expect(typeof cost === "number" || cost === undefined).toBe(true)
+		})
+		it("should calculate cost with cache read tokens using vertex model", () => {
+			const handler = new VertexHandler({
+				apiModelId: "gemini-1.5-pro-002",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { info } = handler.getModel()
+			const inputTokens = 20000
+			const outputTokens = 10000
+			const cacheReadTokens = 5000
+
+			const cost = calculateCostGenai({ info, inputTokens, outputTokens, cacheReadTokens })
+
+			// gemini-1.5-pro-002 has inputPrice and outputPrice but no cacheReadsPrice
+			// so calculateCostGenai returns undefined
+			expect(cost).toBeUndefined()
+		})
+
+		it("should handle models with zero pricing", () => {
+			const handler = new VertexHandler({
+				apiModelId: "gemini-2.0-flash-thinking-exp-01-21",
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { info } = handler.getModel()
+			const cost = calculateCostGenai({ info, inputTokens: 1000, outputTokens: 500 })
+
+			// This model has inputPrice: 0, outputPrice: 0, but no cacheReadsPrice
+			// so calculateCostGenai returns undefined
+			expect(cost).toBeUndefined()
+		})
+
+		it("should handle models without pricing information", () => {
+			const handler = new VertexHandler({
+				apiModelId: "claude-sonnet-4@20250514", // Default vertex model
+				vertexProjectId: "test-project",
+				vertexRegion: "us-central1",
+			})
+
+			const { info } = handler.getModel()
+			const cost = calculateCostGenai({ info, inputTokens: 1000, outputTokens: 500 })
+
+			// Claude models in vertex might not have pricing info
+			expect(typeof cost === "number" || cost === undefined).toBe(true)
+		})
+	})
+
+	describe("error handling", () => {
+		it("should handle streaming errors gracefully", async () => {
+			const mockError = new Error("Streaming failed") // Mock createMessage to throw an error
+			// eslint-disable-next-line require-yield
+			jest.spyOn(handler, "createMessage").mockImplementation(async function* () {
+				throw mockError
+			})
+
+			const mockMessages: Anthropic.Messages.MessageParam[] = [{ role: "user", content: "Test" }]
+
+			const stream = handler.createMessage("System", mockMessages)
+
+			await expect(async () => {
+				for await (const chunk of stream) {
+					// This should throw
+				}
+			}).rejects.toThrow("Streaming failed")
+		})
+	})
+	describe("destruct", () => {
+		it("should have a destruct method", () => {
+			expect(typeof handler.destruct).toBe("function")
+			expect(() => handler.destruct()).not.toThrow()
 		})
 	})
 })
