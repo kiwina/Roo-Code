@@ -128,13 +128,19 @@ export class VertexHandler extends BaseProvider implements SingleCompletionHandl
 		try {
 			const { id: model } = this.getModel()
 
-			const result = await this.client.models.generateContent({
+			const params: GenerateContentParameters = {
 				model,
 				contents: [{ role: "user", parts: [{ text: prompt }] }],
 				config: {
 					temperature: this.options.modelTemperature ?? 0,
 				},
-			})
+			}
+
+			if (this.options.vertexApiKey && this.options.vertexProjectId) {
+				params.model = `projects/${this.options.vertexProjectId}/locations/${this.options.vertexRegion}/publishers/google/models/${model}`
+			}
+
+			const result = await this.client.models.generateContent(params)
 
 			return result.text ?? ""
 		} catch (error) {

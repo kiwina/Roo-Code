@@ -466,9 +466,8 @@ describe("VertexHandler", () => {
 
 	describe("error handling", () => {
 		it("should handle streaming errors gracefully", async () => {
-			const mockError = new Error("Streaming failed")
-
-			// Mock createMessage to throw an error
+			const mockError = new Error("Streaming failed") // Mock createMessage to throw an error
+			// eslint-disable-next-line require-yield
 			jest.spyOn(handler, "createMessage").mockImplementation(async function* () {
 				throw mockError
 			})
