@@ -247,28 +247,11 @@ const CodeBlock = memo(
 			}
 		}, [language, currentLanguage])
 
-		// Manage mounted state
+		// Syntax highlighting with cached Shiki instance and mounted state management
 		useEffect(() => {
+			// Set mounted state at the beginning of this effect
 			isMountedRef.current = true
-			return () => {
-				isMountedRef.current = false
-			}
-		}, [])
 
-		// Cleanup for collapse/expand timeouts
-		useEffect(() => {
-			return () => {
-				if (collapseTimeout1Ref.current) {
-					clearTimeout(collapseTimeout1Ref.current)
-				}
-				if (collapseTimeout2Ref.current) {
-					clearTimeout(collapseTimeout2Ref.current)
-				}
-			}
-		}, [])
-
-		// Syntax highlighting with cached Shiki instance.
-		useEffect(() => {
 			const fallback = `<pre style="padding: 0; margin: 0;"><code class="hljs language-${currentLanguage || "txt"}">${source || ""}</code></pre>`
 
 			const highlight = async () => {
@@ -317,6 +300,23 @@ const CodeBlock = memo(
 					setHighlightedCode(fallback)
 				}
 			})
+
+			// Cleanup function - manage mounted state and clear all timeouts
+			return () => {
+				isMountedRef.current = false
+				if (buttonPositionTimeoutRef.current) {
+					clearTimeout(buttonPositionTimeoutRef.current)
+					buttonPositionTimeoutRef.current = null
+				}
+				if (collapseTimeout1Ref.current) {
+					clearTimeout(collapseTimeout1Ref.current)
+					collapseTimeout1Ref.current = null
+				}
+				if (collapseTimeout2Ref.current) {
+					clearTimeout(collapseTimeout2Ref.current)
+					collapseTimeout2Ref.current = null
+				}
+			}
 		}, [source, currentLanguage, collapsedHeight])
 
 		// Check if content height exceeds collapsed height whenever content changes
