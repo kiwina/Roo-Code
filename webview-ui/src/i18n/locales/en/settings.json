@@ -89,6 +89,7 @@
 		},
 		"ollamaUrlPlaceholder": "http://localhost:11434",
 		"openAiCompatibleBaseUrlPlaceholder": "https://api.example.com",
+		"lmstudioUrlPlaceholder": "http://localhost:1234",
 		"modelDimensionPlaceholder": "1536",
 		"qdrantUrlPlaceholder": "http://localhost:6333",
 		"saveError": "Failed to save settings",
