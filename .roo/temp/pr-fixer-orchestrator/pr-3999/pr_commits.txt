@@ -1,0 +1,2 @@
+1e9d7537 Add LM Studio configuration handling to CodeIndexConfigManager tests
+c82458ae Add LM Studio support to code indexing service and settings

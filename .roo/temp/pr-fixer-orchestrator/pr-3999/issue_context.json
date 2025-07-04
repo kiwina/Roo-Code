@@ -1,0 +1,27 @@
+{
+	"assignees": [{ "id": "MDQ6VXNlcjUwODczNjU3", "login": "MuriloFP", "name": "Murilo Pires" }],
+	"author": { "id": "MDQ6VXNlcjEwNzEzNjQ=", "is_bot": false, "login": "kiwina", "name": "kiwina" },
+	"body": "### What problem does this proposed feature solve?\n\nAdds support for LM Studio code-indexer provider\n\n### Describe the proposed solution in detail\n\nAdds support for LM Studio code-indexer provider\n\n### Technical considerations or implementation details (optional)\n\n_No response_\n\n### Describe alternatives considered (if any)\n\n_No response_\n\n### Additional Context & Mockups\n\n_No response_\n\n### Proposal Checklist\n\n- [x] I have searched existing Issues and Discussions to ensure this proposal is not a duplicate.\n- [x] This proposal is for a specific, actionable change intended for implementation (not a general idea).\n- [x] I understand that this proposal requires review and approval before any development work begins.\n\n### Are you interested in implementing this feature if approved?\n\n- [x] Yes, I would like to contribute to implementing this feature.",
+	"closedAt": null,
+	"comments": [],
+	"createdAt": "2025-05-26T16:17:38Z",
+	"labels": [
+		{
+			"id": "LA_kwDONIq5lM8AAAABygFzKg",
+			"name": "enhancement",
+			"description": "New feature or request",
+			"color": "a2eeef"
+		},
+		{
+			"id": "LA_kwDONIq5lM8AAAAB45NoFA",
+			"name": "Issue - In Progress",
+			"description": "Someone is actively working on this. Should link to a PR soon.",
+			"color": "076738"
+		}
+	],
+	"milestone": null,
+	"number": 3998,
+	"state": "OPEN",
+	"title": "LM Studio code-indexer provider",
+	"updatedAt": "2025-07-04T16:15:52Z"
+}

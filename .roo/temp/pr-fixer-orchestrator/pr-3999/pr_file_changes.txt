@@ -1,0 +1,14 @@
+M	src/exports/roo-code.d.ts
+M	src/exports/types.ts
+M	src/schemas/index.ts
+M	src/services/code-index/__tests__/config-manager.test.ts
+M	src/services/code-index/__tests__/service-factory.test.ts
+M	src/services/code-index/config-manager.ts
+A	src/services/code-index/embedders/lmstudio.ts
+M	src/services/code-index/interfaces/config.ts
+M	src/services/code-index/interfaces/embedder.ts
+M	src/services/code-index/interfaces/manager.ts
+M	src/services/code-index/service-factory.ts
+M	src/shared/embeddingModels.ts
+M	webview-ui/src/components/settings/CodeIndexSettings.tsx
+M	webview-ui/src/i18n/locales/en/settings.json

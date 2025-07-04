@@ -1,0 +1,21 @@
+MERGE CONFLICT SUMMARY
+=====================
+
+Files deleted in main but modified in PR (modify/delete conflicts):
+1. src/exports/roo-code.d.ts
+2. src/exports/types.ts
+3. src/schemas/index.ts
+4. src/services/code-index/__tests__/config-manager.test.ts
+5. src/services/code-index/__tests__/service-factory.test.ts
+6. webview-ui/src/components/settings/CodeIndexSettings.tsx
+
+Files with content conflicts:
+1. src/services/code-index/config-manager.ts
+2. src/services/code-index/interfaces/config.ts
+3. src/services/code-index/interfaces/embedder.ts
+4. src/services/code-index/interfaces/manager.ts
+5. src/services/code-index/service-factory.ts
+6. src/shared/embeddingModels.ts
+7. webview-ui/src/i18n/locales/en/settings.json
+
+Total conflicts: 13 files
